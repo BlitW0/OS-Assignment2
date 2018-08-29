@@ -1,4 +1,4 @@
-// 1, 2, 5, 4(1/2) done (total 6)
+// 1, 2, 5, 4, 6 done (total 6)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,12 +8,14 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #define W_DELIM " \t\n\r\a"
 #define MGN "\x1B[35m"
 #define RESET "\x1B[0m"
 
 char HOME[250];
+
 
 char *get_input() {
     char *input = NULL;
@@ -75,9 +77,29 @@ char **tokenize_input(char *input, char *delim) {
 }
 
 
-/* --------------- Foreground processs --------------- */
+/* --------------- Processes --------------- */
+void sigint_handler(int sig) {
+    pid_t pid = wait(NULL);
+    if (pid != -1) {
+        printf("\n[%d] exited with status %d.\n", pid, WEXITSTATUS(pid));
+    }
+}
+
+
 int proc_launch(char **argv) {
+
+    int bg = 0;
+    for (int i = 0; argv[i] != NULL; i++) {
+        int len = strlen(argv[i]);
+        if (argv[i][len - 1] == '&') {
+            bg = 1;
+            argv[i][len - 1] = '\0';
+            if (argv[i][len - 2] == ' ')
+                argv[i][len - 2] = '\0';
+        }
+    }
     
+    signal(SIGCHLD, sigint_handler);
     pid_t pid = fork(), wpid;
     int state;
 
@@ -88,19 +110,24 @@ int proc_launch(char **argv) {
             perror("ush");
         exit(EXIT_FAILURE);
     } else {
-        wpid = waitpid(pid, &state, WUNTRACED);
-        while (1) {
-            if (!WIFEXITED(state) && !WIFSIGNALED(state)) {
-                wpid = waitpid(pid, &state, WUNTRACED);
-                continue;
+        if (!bg) {
+            wpid = waitpid(pid, &state, WUNTRACED);
+            while (1) {
+                if (!WIFEXITED(state) && !WIFSIGNALED(state)) {
+                    wpid = waitpid(pid, &state, WUNTRACED);
+                    continue;
+                }
+                break;
             }
-            break;
+        } else {
+            printf("\n[%d] started\n\n", pid);
+            waitpid(pid, &state, WNOHANG);
         }
     }
 
     return 1;
 }
-/* ----------------------------------------------*/
+/* ----------------------------------------------------- */
 
 
 
