@@ -1,4 +1,4 @@
-// 1, 2, 5 done
+// 1, 2, 5, 4(1/2) done (total 6)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,8 +7,12 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #define W_DELIM " \t\n\r\a"
+#define MGN "\x1B[35m"
+#define RESET "\x1B[0m"
+
 char HOME[250];
 
 char *get_input() {
@@ -17,6 +21,7 @@ char *get_input() {
     getline(&input, &sz, stdin);
     return input;
 }
+
 
 char *process_dir(char *curdir) {
     char *ret = NULL;
@@ -40,9 +45,10 @@ char *process_dir(char *curdir) {
     return ret;
 }
 
+
 char **tokenize_input(char *input, char *delim) {
 
-    int sz = 100;
+    int sz = 100, i;
     char *token, **ret = (char **) malloc(sz * sizeof(char *));
 
     if (!ret) {
@@ -51,7 +57,7 @@ char **tokenize_input(char *input, char *delim) {
     }
 
     token = strtok(input, delim);
-    for (int i = 0; token != NULL; i++) {
+    for (i = 0; token != NULL; i++) {
         if (i == sz) {
             sz += 100;
             char **new_ret = realloc(ret, sz);
@@ -64,22 +70,53 @@ char **tokenize_input(char *input, char *delim) {
         ret[i] = token;
         token = strtok(NULL, delim);
     }
+    ret[i] = NULL;
     return ret;
 }
 
 
+/* --------------- Foreground processs --------------- */
+int proc_launch(char **argv) {
+    
+    pid_t pid = fork(), wpid;
+    int state;
+
+    if (pid == -1)
+        perror("ush");
+    else if (!pid) {
+        if (execvp(argv[0], argv) == -1)
+            perror("ush");
+        exit(EXIT_FAILURE);
+    } else {
+        wpid = waitpid(pid, &state, WUNTRACED);
+        while (1) {
+            if (!WIFEXITED(state) && !WIFSIGNALED(state)) {
+                wpid = waitpid(pid, &state, WUNTRACED);
+                continue;
+            }
+            break;
+        }
+    }
+
+    return 1;
+}
+/* ----------------------------------------------*/
+
+
+
 /* ----------------- Built in done -------------------*/
 int pwd() {
-    char cwd[250];
+    char *cwd = (char *) malloc(250 * sizeof(char));
     getcwd(cwd, 250);
     printf("%s\n", cwd);
+    free(cwd);
     return 1;
 }
 
 int cd(char **argv) {
     char *curdir = (char *) malloc(250 * sizeof(char));
     getcwd(curdir, 250); 
-    if (argv[1]) {
+    if (argv[1] != NULL) {
         if (!strcmp(argv[1], "~"))
             chdir(HOME);
         else {
@@ -89,6 +126,7 @@ int cd(char **argv) {
                 perror("ush");
         }
     }
+    free(curdir);
     return 1;
 }
 
@@ -100,8 +138,6 @@ int echo(char **argv) {
 }
 
 int pinfo(char **argv) {
-    // /proc/self/stat -> pid(0), status(1), vm(23)
-    // **********/exe -> path(0)
 
     char proc_path[400], info_path[500], sym_path[400], exe_path[500];
 
@@ -135,6 +171,8 @@ int pinfo(char **argv) {
     }
     exe_path[len] = '\0';
     printf("Executable Path -- %s\n", process_dir(exe_path));
+
+    free(out);
     return 1;
 }
 /* ----------------------------------------------------*/
@@ -143,7 +181,9 @@ int pinfo(char **argv) {
 int execute(char **argv) {
     if (argv[0] == NULL) {
         return 1;
-    } else if (!strcmp("pwd", argv[0])) {
+    }
+    
+    if (!strcmp("pwd", argv[0])) {
         return pwd();
     } else if (!strcmp("cd", argv[0])) {
         return cd(argv);
@@ -151,8 +191,11 @@ int execute(char **argv) {
         return echo(argv);
     } else if (!strcmp("pinfo", argv[0])) {
         return pinfo(argv);
-    } else if (!strcmp("exit", argv[0]))
+    } else if (!strcmp("exit", argv[0])) {
         return 0;
+    }
+
+    return proc_launch(argv);
 }
 
 int main() {
@@ -170,15 +213,15 @@ int main() {
         gethostname(host, 200);
         getcwd(curdir, 250);
 
-        printf("%s@%s:%s> ", user, host, process_dir(curdir));
+        printf(MGN "%s@%s:%s> " RESET, user, host, process_dir(curdir));
         
         input = get_input();
         commands = tokenize_input(input, ";");
 
-
         for (int i = 0; commands[i] != NULL && state; i++) {
             argv = tokenize_input(commands[i], W_DELIM);
             state = execute(argv);
+            free(argv);
         }
 
         free(input);
