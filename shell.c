@@ -1,4 +1,4 @@
-// 1, 2, 5, 4, 6 done (total 6)
+// 1, 2, 5, 4, 6, 3 done (total 6)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,9 +9,15 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <dirent.h>
+#include <time.h>
+#include <pwd.h>
+#include <grp.h>
 
 #define W_DELIM " \t\n\r\a"
 #define MGN "\x1B[35m"
+#define GREEN "\x1b[32m"
+#define BLU "\x1b[34m"
 #define RESET "\x1B[0m"
 
 char HOME[250];
@@ -152,6 +158,8 @@ int cd(char **argv) {
             if (chdir(argv[1]))
                 perror("ush");
         }
+    } else {
+        chdir(HOME);
     }
     free(curdir);
     return 1;
@@ -202,6 +210,124 @@ int pinfo(char **argv) {
     free(out);
     return 1;
 }
+
+
+void ls_utility(struct stat info, struct dirent *name) {
+    struct passwd *pw = getpwuid(info.st_uid);
+    
+    char date[150];
+    strftime(date, 100, "%h %d %H:%M", localtime(&(info.st_ctime)));
+    
+    struct group  *gr = getgrgid(info.st_gid);
+    
+    int d = S_ISDIR(info.st_mode);
+
+    printf( (S_ISDIR(info.st_mode)) ? "d" : "-");
+    printf( (info.st_mode & S_IRUSR) ? "r" : "-");
+    printf( (info.st_mode & S_IWUSR) ? "w" : "-");
+    printf( (info.st_mode & S_IXUSR) ? "x" : "-");
+    printf( (info.st_mode & S_IRGRP) ? "r" : "-");
+    printf( (info.st_mode & S_IWGRP) ? "w" : "-");
+    printf( (info.st_mode & S_IXGRP) ? "x" : "-");
+    printf( (info.st_mode & S_IROTH) ? "r" : "-");
+    printf( (info.st_mode & S_IWOTH) ? "w" : "-");
+    printf( (info.st_mode & S_IXOTH) ? "x" : "-");
+    
+    printf(" %d", (int)info.st_nlink);
+    
+    printf(" %s", pw->pw_name);
+    printf(" %s", gr->gr_name);
+    
+    printf(" %8d", (int)info.st_size);
+    printf(" %s", date);
+    
+    if (d) printf(BLU);
+    printf(" %s", name->d_name);
+    printf(RESET);
+
+    printf("\n");
+}
+
+
+int ls(char **argv) {
+    int a = 0, l = 0, dir_count = 0;
+
+    DIR *dir;
+    struct dirent *name;
+    struct stat info;
+
+    struct tm *starttime[2];
+	time_t now;
+	int year;
+    unsigned char mod[13];
+
+    for (int i = 1; argv[i] != NULL; i++) {
+        if (!strcmp(argv[i], "-a"))
+            a = 1;
+        else if (!strcmp(argv[i], "-l"))
+            l = 1;
+        else if (!strcmp(argv[i], "-al") || !strcmp(argv[i], "-la")) {
+            a = 1;
+            l = 1;
+        }
+        else if (strcmp(argv[i], " "))
+            dir_count++;
+    }
+
+    int single = 0;
+    if (!dir_count) {
+        dir_count = 1;
+        single = 1;
+    }
+
+    char dir_names[dir_count * 8][100];
+
+    for (int i = 1, j = 0; argv[i] != NULL; i++)
+        if (strcmp(argv[i], "-al") && strcmp(argv[i], "-la") && strcmp(argv[i], "-a") && strcmp(argv[i], "-l"))
+            strcpy(dir_names[j++], argv[i]);
+
+    if (single)
+        strcpy(dir_names[0], ".");
+
+    int i = 0;
+    while (i < dir_count) {
+
+        dir = opendir(dir_names[i]);
+        
+        if (dir == NULL) {
+            fprintf(stderr, "%s: No such file or directory\n", dir_names[i]);
+            continue;
+        }
+
+        printf(GREEN "%s:\n" RESET, dir_names[i]);
+
+        for (; (name = readdir(dir)) != NULL; ) {
+            
+            char buf[500];
+            sprintf(buf, "%s/%s", dir_names[i], name->d_name);
+            stat(buf, &info);
+            
+            if (!l && a) {
+                if (S_ISDIR(info.st_mode)) printf(BLU);
+                printf("%s\n" RESET, name->d_name);
+            } else if (a && l) {
+                ls_utility(info, name);
+            } else if (!a && !l) {
+                if(name->d_name[0] != '.') {
+                    if (S_ISDIR(info.st_mode)) printf(BLU);
+                    printf("%s\n" RESET, name->d_name);
+                }
+            } else {
+                if (name->d_name[0] != '.')
+                    ls_utility(info, name);
+            }
+        }
+        i++;
+    }
+    closedir(dir);
+
+    return 1;
+}
 /* ----------------------------------------------------*/
 
 
@@ -218,6 +344,8 @@ int execute(char **argv) {
         return echo(argv);
     } else if (!strcmp("pinfo", argv[0])) {
         return pinfo(argv);
+    } else if (!strcmp("ls", argv[0])) {
+        return ls(argv);
     } else if (!strcmp("exit", argv[0])) {
         return 0;
     }
@@ -240,7 +368,7 @@ int main() {
         gethostname(host, 200);
         getcwd(curdir, 250);
 
-        printf(MGN "%s@%s:%s> " RESET, user, host, process_dir(curdir));
+        printf(MGN "<%s@%s:%s> " RESET, user, host, process_dir(curdir));
         
         input = get_input();
         commands = tokenize_input(input, ";");
