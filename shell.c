@@ -20,8 +20,9 @@
 #define BLU "\x1b[34m"
 #define RESET "\x1B[0m"
 
-char HOME[250];
-
+char HOME[250], bg_proc_name[100][100];
+int bg_proc[100], bg_cnt = 0;
+int b_clock = 1;
 
 char *get_input() {
     char *input = NULL;
@@ -83,12 +84,23 @@ char **tokenize_input(char *input, char *delim) {
 }
 
 
-/* --------------- Processes --------------- */
+/* ---------------------- Processes ------------------- */
 void sigint_handler(int sig) {
-    pid_t pid = wait(NULL);
+    int state;
+    pid_t pid = waitpid(-1, &state, WNOHANG);
+	
     if (pid != -1) {
-        printf("\n[%d] exited with status %d.\n", pid, WEXITSTATUS(pid));
-    }
+		if(!WIFSIGNALED(state)) {
+			for (int i = 0; i < bg_cnt; i++)
+				if (pid == bg_proc[i]) {
+					printf("\n[%d]  + %d done\t%s\n", i + 1, pid, bg_proc_name[i]);
+
+                    bg_proc[i] = -1;
+                    bg_cnt--;
+					break;
+				}
+		}
+	}
 }
 
 
@@ -105,7 +117,6 @@ int proc_launch(char **argv) {
         }
     }
     
-    signal(SIGCHLD, sigint_handler);
     pid_t pid = fork(), wpid;
     int state;
 
@@ -126,8 +137,12 @@ int proc_launch(char **argv) {
                 break;
             }
         } else {
-            printf("\n[%d] started\n\n", pid);
-            waitpid(pid, &state, WNOHANG);
+            bg_proc[bg_cnt] = pid;
+            strcpy(bg_proc_name[bg_cnt++], argv[0]);
+
+            printf("[%d] %d\n", bg_cnt, pid);
+            signal(SIGCHLD, sigint_handler);
+            bg = 0;
         }
     }
 
@@ -256,11 +271,6 @@ int ls(char **argv) {
     struct dirent *name;
     struct stat info;
 
-    struct tm *starttime[2];
-	time_t now;
-	int year;
-    unsigned char mod[13];
-
     for (int i = 1; argv[i] != NULL; i++) {
         if (!strcmp(argv[i], "-a"))
             a = 1;
@@ -295,7 +305,7 @@ int ls(char **argv) {
         dir = opendir(dir_names[i]);
         
         if (dir == NULL) {
-            fprintf(stderr, "%s: No such file or directory\n", dir_names[i]);
+            fprintf(stderr, "%s: No such file or directory\n", dir_names[i++]);
             continue;
         }
 
@@ -331,6 +341,88 @@ int ls(char **argv) {
 /* ----------------------------------------------------*/
 
 
+/* ---------------- Clock and consequences ------------------*/
+void clock_handler(int signum) {
+    b_clock = 0;
+}
+
+void exit_handler(int signum) {
+    exit(EXIT_SUCCESS);
+}
+
+int clock_builtin(char **argv) {
+
+    if (argv[2] == NULL) {
+        fprintf(stderr, "clock -t: Invalid syntax\n");
+        return 1;
+    }
+
+    int t = atoi(argv[2]);
+    char *path = "/proc/driver/rtc";
+
+    signal(SIGINT, clock_handler);
+
+    printf("Press CTRL-C to stop:\n\n");
+    for (; b_clock && t;) {
+        
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) {
+            fprintf(stderr, "Error getting time\n");
+            return 1;
+        }
+
+        char all[2048];
+        read(fd, all, 2048);
+        close(fd);
+
+        char **lines = tokenize_input(all, W_DELIM);
+        char **fulldate = tokenize_input(lines[5], "-");
+        char m[3], month[5];
+        strcpy(m, fulldate[1]);
+        
+        if (!strcmp(m, "01"))
+            strcpy(month, "Jan");
+        else if (!strcmp(m, "02"))
+            strcpy(month, "Feb");
+        else if (!strcmp(m, "03"))
+            strcpy(month, "Mar");
+        else if (!strcmp(m, "04"))
+            strcpy(month, "Apr");
+        else if (!strcmp(m, "05"))
+            strcpy(month, "May");
+        else if (!strcmp(m, "06"))
+            strcpy(month, "Jun");
+        else if (!strcmp(m, "07"))
+            strcpy(month, "Jul");
+        else if (!strcmp(m, "08"))
+            strcpy(month, "Aug");
+        else if (!strcmp(m, "09"))
+            strcpy(month, "Sep");
+        else if (!strcmp(m, "10"))
+            strcpy(month, "Oct");
+        else if (!strcmp(m, "11"))
+            strcpy(month, "Nov");
+        else if (!strcmp(m, "12"))
+            strcpy(month, "Dec");
+
+        if (fulldate[2][0] == '0') {
+            fulldate[2][0] = fulldate[2][1];
+            fulldate[2][1] = '\0';
+        }
+
+        printf("%s %s %s, %s\n", fulldate[2], month, fulldate[0], lines[2]);
+        
+        free(lines);
+        free(fulldate);
+        sleep(t);
+    }
+
+    b_clock = 1;
+    return 1;
+}
+/* --------------------------------------------------------*/
+
+
 int execute(char **argv) {
     if (argv[0] == NULL) {
         return 1;
@@ -346,6 +438,8 @@ int execute(char **argv) {
         return pinfo(argv);
     } else if (!strcmp("ls", argv[0])) {
         return ls(argv);
+    } else if (!strcmp("clock", argv[0]) && !strcmp("-t", argv[1])) {
+        return clock_builtin(argv);
     } else if (!strcmp("exit", argv[0])) {
         return 0;
     }
@@ -360,9 +454,12 @@ int main() {
 
     getcwd(HOME, 250);
     char *curdir = (char *) malloc(250 * sizeof(char));
+    memset(bg_proc, -1, sizeof(bg_proc));
 
     int state;
     do {
+
+        signal(SIGINT, exit_handler);
 
         cuserid(user);
         gethostname(host, 200);
