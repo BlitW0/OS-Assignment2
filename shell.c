@@ -18,8 +18,10 @@ int main() {
     if (len < 0)
         getcwd(HOME, 250);
     else {
-        for (int i = strlen(curhome) - 1, j = strlen("/shell"); j; j--, i--)
+        int i;
+        for (i = strlen(curhome) - 1; curhome[i] != '/'; i--)
             curhome[i] = '\0';
+        curhome[i] = '\0';
         
         strcpy(HOME, curhome);
 
